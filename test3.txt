@@ -1,0 +1,185 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Web;
+using System.Web.UI;
+using System.Web.UI.WebControls;
+using LibGit2Sharp;
+using LibGit2Sharp.Handlers;
+
+namespace WebApplication3
+{
+    public class RepoCloner
+    {
+        // Private class variables
+        private Repository m_Repository;
+        private readonly string m_WorkingDir;
+        private readonly string m_UserName;
+        private readonly string m_EmailId;
+        private string m_branchName;
+        private PushOptions m_PushOptions;
+        public RepoCloner(string workingDir)
+        {
+            m_WorkingDir = workingDir;
+
+            // TODO: User Name and email id to be retrieved from config
+            m_UserName = @"annakorath";
+            m_EmailId = @"anna.reju@gmail.com";
+
+            m_PushOptions = new PushOptions();
+        }
+
+        public bool Clone(string remotePath, string branchName)
+        {
+            Repository.Clone(remotePath, m_WorkingDir, new CloneOptions { BranchName = branchName, Checkout = true });
+            m_Repository = new Repository(m_WorkingDir);
+            m_branchName = branchName;
+            return true;
+        }
+
+        public bool SetPushOptions(UsernamePasswordCredentials credentials)
+        {
+            m_PushOptions.CredentialsProvider = (_url, _user, _cred) => credentials;
+            return true;
+        }
+
+        public string Commit(string commitMsg)
+        {
+            Commands.Stage(m_Repository, "*");
+            var signature = new Signature(m_UserName, m_EmailId, DateTimeOffset.Now);
+            var commit = m_Repository.Commit(commitMsg, signature, signature);
+            return commit.Sha;
+        }
+
+        public bool Push()
+        {
+            m_Repository.Network.Push(m_Repository.Branches[m_branchName], m_PushOptions);
+            return true;
+        }
+    }
+
+    public sealed class GitCloneManager
+    {
+        // Private static variables
+        private static readonly object s_Lock = new object();
+        private static GitCloneManager s_Instance = null;
+
+        // Private class variables
+        private readonly object m_TableLock;
+        private Dictionary<string, RepoCloner> m_RepoClonerTable;
+
+        // Private constructor for Singleton
+        private GitCloneManager()
+        {
+            m_RepoClonerTable = new Dictionary<string, RepoCloner>();
+            m_TableLock = new object();
+        }
+
+        public static GitCloneManager Instance
+        {
+            get
+            {
+                lock (s_Lock)
+                {
+                    if (s_Instance == null)
+                    {
+                        s_Instance = new GitCloneManager();
+                    }
+                    return s_Instance;
+                }
+            }
+        }
+
+        public bool CheckRepoClonerExists(string workDir)
+        {
+            lock (m_TableLock)
+            {
+                return m_RepoClonerTable.ContainsKey(workDir);
+            }
+        }
+
+        public bool CheckRepoPathExists(string workDir)
+        {
+            return false;
+        }
+
+        public RepoCloner GetRepoCloner(string workDir)
+        {
+            lock (m_TableLock)
+            {
+                if (m_RepoClonerTable.ContainsKey(workDir) == false)
+                {
+                    // TODO: Check and create working dir atomically. If it exists, we should return failure
+                    m_RepoClonerTable.Add(workDir, new RepoCloner(workDir));
+                }
+                return m_RepoClonerTable[workDir];
+            }
+        }
+
+        public bool ClearRepoCloner(string workDir)
+        {
+            lock (m_TableLock)
+            {
+                return m_RepoClonerTable.Remove(workDir);
+            }
+        }
+    }
+    public partial class About : Page
+    {
+        public static Repository m_Repository;
+        public static string m_TempDirectory;
+
+        protected void Page_Load(object sender, EventArgs e)
+        {
+
+        }
+
+        protected void Button1_Click(object sender, EventArgs e)
+        {
+            // TODO: This should come as input or should be locally generated if input is empty (e.g: C:\users\<userid>\gitrepo\<uniqueid>)
+            string localPath = @"D:\git\super-repo";
+
+            // TODO: This should come as input
+            string remotePath = @"https://github.com/annakorath/super-repo.git";
+
+            // TODO: This should come as input 
+            string branchName = "master";
+
+            /*
+             * TODO
+             * if ((CheckRepoClonerExists(localPath) == true) || (CheckRepoPathExists(localPath) == true)
+             * {
+             *    show error to user
+             * }
+             */
+
+            // Get the cloner object for the local path and clone the repo
+            var Cloner = GitCloneManager.Instance.GetRepoCloner(localPath);
+
+            // TODO: username and password should come as input. It is hard coded for now.
+            Cloner.SetPushOptions(new UsernamePasswordCredentials { Username = @"annakorath", Password = @"Sept@2019" });
+            Cloner.Clone(remotePath, branchName);
+        }
+
+        protected void Button2_Click(object sender, EventArgs e)
+        {
+            // TODO: This should come as input. i.e the local path from which commit/push has to be done
+            string localPath = @"D:\git\super-repo";
+
+            // TODO: The commit message should come from user
+            string commitMsg = @"This is a sample commit";
+            /*
+             * TODO
+             * if ((CheckRepoClonerExists(localPath) == false) || (CheckRepoPathExists(localPath) == false)
+             * {
+             *    show error to user
+             * }
+             */
+
+            // Get the cloner object for the local path and clone the repo
+            var Cloner = GitCloneManager.Instance.GetRepoCloner(localPath);
+            Cloner.Commit(commitMsg);
+            Cloner.Push();
+         }
+    }
+}
