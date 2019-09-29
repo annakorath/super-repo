@@ -36,7 +36,7 @@ namespace WebApplication3
             SetPushOptions(new UsernamePasswordCredentials { Username = m_UserName, Password = m_Password});
         }
 
-        public bool Clone()
+        public bool DoClone()
         {
             Repository.Clone(m_remoteUrl, m_WorkingDir, new CloneOptions { BranchName = m_branchName, Checkout = true });
             m_Repository = new Repository(m_WorkingDir);
@@ -49,7 +49,7 @@ namespace WebApplication3
             return true;
         }
 
-        public string Commit(string commitMsg)
+        public string DoCommit(string commitMsg)
         {
             Commands.Stage(m_Repository, "*");
             var signature = new Signature(m_UserName, m_EmailId, DateTimeOffset.Now);
@@ -57,10 +57,145 @@ namespace WebApplication3
             return commit.Sha;
         }
 
-        public bool Push()
+        public bool DoPush()
         {
             m_Repository.Network.Push(m_Repository.Branches[m_branchName], m_PushOptions);
             return true;
+        }
+        public bool DoAddFile(string filePath)
+        {
+            m_Repository.Index.Add(filePath);
+            m_Repository.Index.Write();
+            return true;
+        }
+
+        public List<string> GetLocalBranches()
+        {
+            List<string> branchNames = new List<string>();
+            foreach (Branch b in m_Repository.Branches.Where(b => !b.IsRemote))
+            {
+                branchNames.Add(b.IsCurrentRepositoryHead ? "*" : " " + b.FriendlyName);
+            }
+            return branchNames;            
+        }
+
+        public List<string> GetLocalBranches(string commitSha)
+        {
+            List<string> branchNames = new List<string>();
+
+            var localHeads = m_Repository.Refs.Where(r => r.IsLocalBranch);
+
+            var commit = m_Repository.Lookup<Commit>(commitSha);
+            var localHeadsContainingTheCommit = m_Repository.Refs.ReachableFrom(localHeads, new[] { commit });
+
+            foreach (Branch b in localHeadsContainingTheCommit
+                .Select(branchRef => m_Repository.Branches[branchRef.CanonicalName]))
+            {
+                branchNames.Add(b.CanonicalName);
+            }
+
+            return branchNames;
+        }
+
+        public bool DoCreateBranch(string branchName)
+        {
+            m_Repository.CreateBranch(branchName);
+            return true;
+        }
+
+        public bool DoCreateBranch(string branchName, string inVersion)
+        {
+            m_Repository.CreateBranch(branchName, inVersion);
+            return true;
+        }
+
+        public bool DoDeleteBranch(string branchName)
+        {
+            m_Repository.Branches.Remove(branchName);
+            return true;
+        }
+
+        public bool DoEditBranchDescription(string branchName, string description)
+        {
+            var key = string.Format("branch.{0}.description", branchName);
+            m_Repository.Config.Set(key, description.Replace(Environment.NewLine, string.Empty)); // set description
+            return true;
+        }
+
+        public string GetCatFile()
+        {
+            string output = "";
+            foreach (var item in m_Repository.RetrieveStatus())
+            {
+                if (item.State == FileStatus.ModifiedInWorkdir)
+                {
+                    var blob = m_Repository.Head.Tip[item.FilePath].Target as Blob;
+                    string commitContent;
+                    using (var content = new StreamReader(blob.GetContentStream(), System.Text.Encoding.UTF8))
+                    {
+                        commitContent = content.ReadToEnd();
+                    }
+                    string workingContent;
+                    using (var content = new StreamReader(m_Repository.Info.WorkingDirectory + Path.DirectorySeparatorChar + item.FilePath, System.Text.Encoding.UTF8))
+                    {
+                        workingContent = content.ReadToEnd();
+                    }
+                    output += @"\n\n~~~~ Original file ~~~~";
+                    output += commitContent;
+                    output += @"\n\n~~~~ Current file ~~~~";
+                    output += workingContent;
+                }
+            }
+            return output;
+        }
+
+        public bool DoCheckout(string branchName)
+        {
+            var branch = m_Repository.Branches[branchName];
+
+            if (branch == null)
+            {
+                // repository return false when branch not exists
+                return false;
+            }
+
+            Commands.Checkout(m_Repository, branch);
+            return true;
+        }
+
+        public string GetDiff()
+        {
+            string output = "";
+            foreach (TreeEntryChanges c in m_Repository.Diff.Compare<TreeChanges>())
+            {
+                output += c;
+            }
+            return output;
+        }
+
+        public string DoFetch()
+        {
+            string logMessage = "";
+            var remote = m_Repository.Network.Remotes["origin"];
+            var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
+            Commands.Fetch(m_Repository, remote.Name, refSpecs, null, logMessage);
+            return logMessage;
+        }
+
+        public List<string> GetUnmergedFiles()
+        {
+            List<string> fileList = new List<string>();
+            foreach (IndexEntry e in m_Repository.Index)
+            {
+                if (e.StageLevel == 0)
+                {
+                    continue;
+                }
+                fileList.Add(string.Format("{0} {1} {2}       {3}",
+                    Convert.ToString((int)e.Mode, 8),
+                    e.Id.ToString(), (int)e.StageLevel, e.Path));
+            }
+            return fileList;
         }
     }
 
@@ -155,7 +290,7 @@ namespace WebApplication3
 
             // Get the cloner object for the local path and clone the repo
             var Cloner = GitCloneManager.Instance.GetRepoCloner(gitcfg);
-            Cloner.Clone();
+            Cloner.DoClone();
         }
 
         protected void Button2_Click(object sender, EventArgs e)
@@ -175,8 +310,8 @@ namespace WebApplication3
 
             // Get the cloner object for the local path and clone the repo
             var Cloner = GitCloneManager.Instance.GetRepoCloner(gitcfg);
-            Cloner.Commit(commitMsg);
-            Cloner.Push();
+            Cloner.DoCommit(commitMsg);
+            Cloner.DoPush();
          }
     }
 }
