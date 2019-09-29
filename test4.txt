@@ -1,0 +1,182 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Web;
+using System.Web.UI;
+using System.Web.UI.WebControls;
+using System.IO;
+using LibGit2Sharp;
+using LibGit2Sharp.Handlers;
+using Newtonsoft.Json.Linq;
+
+namespace WebApplication3
+{
+    public class RepoCloner
+    {
+        // Private class variables
+        private Repository m_Repository;
+        private readonly string m_WorkingDir;
+        private readonly string m_UserName;
+        private readonly string m_Password;
+        private readonly string m_EmailId;
+        private readonly string m_remoteUrl;
+        private string m_branchName;
+        private PushOptions m_PushOptions;
+        public RepoCloner(string gitCfgFile)
+        {
+            JObject gitcfg = JObject.Parse(File.ReadAllText(gitCfgFile));
+            m_UserName = (string)gitcfg["username"];
+            m_Password = (string)gitcfg["password"];
+            m_EmailId = (string)gitcfg["emailid"];
+            m_remoteUrl = (string)gitcfg["remoteurl"];
+            m_branchName = (string)gitcfg["branch"];
+            m_WorkingDir = (string)gitcfg["localpath"];
+
+            m_PushOptions = new PushOptions();
+            SetPushOptions(new UsernamePasswordCredentials { Username = m_UserName, Password = m_Password});
+        }
+
+        public bool Clone()
+        {
+            Repository.Clone(m_remoteUrl, m_WorkingDir, new CloneOptions { BranchName = m_branchName, Checkout = true });
+            m_Repository = new Repository(m_WorkingDir);
+            return true;
+        }
+
+        public bool SetPushOptions(UsernamePasswordCredentials credentials)
+        {
+            m_PushOptions.CredentialsProvider = (_url, _user, _cred) => credentials;
+            return true;
+        }
+
+        public string Commit(string commitMsg)
+        {
+            Commands.Stage(m_Repository, "*");
+            var signature = new Signature(m_UserName, m_EmailId, DateTimeOffset.Now);
+            var commit = m_Repository.Commit(commitMsg, signature, signature);
+            return commit.Sha;
+        }
+
+        public bool Push()
+        {
+            m_Repository.Network.Push(m_Repository.Branches[m_branchName], m_PushOptions);
+            return true;
+        }
+    }
+
+    public sealed class GitCloneManager
+    {
+        // Private static variables
+        private static readonly object s_Lock = new object();
+        private static GitCloneManager s_Instance = null;
+
+        // Private class variables
+        private readonly object m_TableLock;
+        private Dictionary<string, RepoCloner> m_RepoClonerTable;
+
+        // Private constructor for Singleton
+        private GitCloneManager()
+        {
+            m_RepoClonerTable = new Dictionary<string, RepoCloner>();
+            m_TableLock = new object();
+        }
+
+        public static GitCloneManager Instance
+        {
+            get
+            {
+                lock (s_Lock)
+                {
+                    if (s_Instance == null)
+                    {
+                        s_Instance = new GitCloneManager();
+                    }
+                    return s_Instance;
+                }
+            }
+        }
+
+        public bool CheckRepoClonerExists(string gitCfgFile)
+        {
+            lock (m_TableLock)
+            {
+                return m_RepoClonerTable.ContainsKey(gitCfgFile);
+            }
+        }
+
+        public bool CheckRepoPathExists(string gitCfgFile)
+        {
+            return false;
+        }
+
+        public RepoCloner GetRepoCloner(string gitCfgFile)
+        {
+            lock (m_TableLock)
+            {
+                if (m_RepoClonerTable.ContainsKey(gitCfgFile) == false)
+                {
+                    // TODO: Check and create working dir atomically. If it exists, we should return failure
+                    m_RepoClonerTable.Add(gitCfgFile, new RepoCloner(gitCfgFile));
+                }
+                return m_RepoClonerTable[gitCfgFile];
+            }
+        }
+
+        public bool ClearRepoCloner(string gitCfgFile)
+        {
+            lock (m_TableLock)
+            {
+                return m_RepoClonerTable.Remove(gitCfgFile);
+            }
+        }
+    }
+    public partial class About : Page
+    {
+        public static Repository m_Repository;
+        public static string m_TempDirectory;
+
+        protected void Page_Load(object sender, EventArgs e)
+        {
+
+        }
+
+        protected void Button1_Click(object sender, EventArgs e)
+        {
+            // TODO: This should come as input or should be locally generated if input is empty (e.g: C:\users\<userid>\gitrepo\<uniqueid>)
+            string gitcfg = @"D:\git\git.json";
+
+            /*
+             * TODO
+             * if ((CheckRepoClonerExists(localPath) == true) || (CheckRepoPathExists(localPath) == true)
+             * {
+             *    show error to user
+             * }
+             */
+
+            // Get the cloner object for the local path and clone the repo
+            var Cloner = GitCloneManager.Instance.GetRepoCloner(gitcfg);
+            Cloner.Clone();
+        }
+
+        protected void Button2_Click(object sender, EventArgs e)
+        {
+            // TODO: This should come as input. i.e the local path from which commit/push has to be done
+            string gitcfg = @"D:\git\git.json";
+
+            // TODO: The commit message should come from user
+            string commitMsg = @"This is a sample commit";
+            /*
+             * TODO
+             * if ((CheckRepoClonerExists(localPath) == false) || (CheckRepoPathExists(localPath) == false)
+             * {
+             *    show error to user
+             * }
+             */
+
+            // Get the cloner object for the local path and clone the repo
+            var Cloner = GitCloneManager.Instance.GetRepoCloner(gitcfg);
+            Cloner.Commit(commitMsg);
+            Cloner.Push();
+         }
+    }
+}
